@@ -1,3 +1,7 @@
+#!/bin/bash
+
+echo "Sample deploy docker container to Azure"
+
 #Docker registry & containers
 
 #https://learn.microsoft.com/en-us/azure/container-registry/container-registry-get-started-azure-cli
