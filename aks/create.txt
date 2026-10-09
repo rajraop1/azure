@@ -1,0 +1,47 @@
+
+
+az provider register --namespace Microsoft.ContainerService --wait
+az provider register --namespace Microsoft.ManagedIdentity --wait
+az provider register --namespace Microsoft.Compute --wait
+
+
+az group create --name RG --location westus2
+
+az aks create --resource-group RG --name AKS --node-count 1 --node-vm-size Standard_D4s_v5 --enable-oidc-issuer --enable-workload-identity --no-ssh-key
+#OR
+az aks create --resource-group RG --name AKS --node-count 1 --node-vm-size Standard_D4s_v5 --enable-cluster-autoscaler --min-count 1 --max-count 3 --enable-oidc-issuer --enable-workload-identity --no-ssh-key
+
+#OR
+az aks update --resource-group RG --name AKS --enable-oidc-issuer --enable-workload-identity
+
+az identity create --resource-group RG --name MI1
+
+az role assignment create --assignee-object-id "$(az identity show --resource-group RG --name MI1 --query principalId --output tsv)" --assignee-principal-type ServicePrincipal --role Contributor --scope "$(az group show --name RG --query id --output tsv)"
+
+#use MI & FIC
+az aks get-credentials --resource-group RG --name AKS
+
+kubectl get ns
+
+kubectl create serviceaccount workload-sa --namespace default
+
+kubectl annotate serviceaccount workload-sa --namespace default azure.workload.identity/client-id="$(az identity show --resource-group RG --name MI1 --query clientId --output tsv)" --overwrite
+
+#test
+kubectl run wi-test --namespace default --image=mcr.microsoft.com/azure-cli:latest --restart=Never --labels="azure.workload.identity/use=true" --overrides='{"spec":{"serviceAccountName":"workload-sa"}}' --command -- sleep 3600
+
+kubectl wait --namespace default --for=condition=Ready pod/wi-test --timeout=180s
+
+kubectl exec --namespace default wi-test -- sh -c 'env | grep "^AZURE_"; test -s "$AZURE_FEDERATED_TOKEN_FILE" && echo "Projected token: OK"'
+
+kubectl exec --namespace default wi-test -- sh -c 'az login --service-principal --username "$AZURE_CLIENT_ID" --tenant "$AZURE_TENANT_ID" --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" --output none && az group show --name RG --query "{name:name,location:location}" --output table'
+
+raj [ ~ ]$ kubectl exec --namespace default wi-test -- sh -c 'az login --service-principal --username "$AZURE_CLIENT_ID" --tenant "$AZURE_TENANT_ID" --federated-token "$(cat "$AZURE_FEDERATED_TOKEN_FILE")" --output none && az resource list -g RG -o table'
+
+kubectl delete pod wi-test --namespace default
+
+
+
+az identity federated-credential create --resource-group RG --identity-name MI1 --name FIC --issuer "$(az aks show --resource-group RG --name AKS --query oidcIssuerProfile.issuerUrl --output tsv)" --subject "system:serviceaccount:default:workload-sa" --audiences "api://AzureADTokenExchange"
+
+

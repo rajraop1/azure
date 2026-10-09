@@ -1,0 +1,15 @@
+
+
+az aks get-credentials -g RG1 -n AKS --overwrite-existing
+
+
+kubectl get pods -A
+
+kubectl patch validatingwebhookconfiguration crossplane-no-usages   --type=strategic   --patch '{"webhooks":[{"name":"nousages.protection.crossplane.io","failurePolicy":"Ignore"}]}'
+validatingwebhookconfiguration.admissionregistration.k8s.io/crossplane-no-usages patched
+
+
+az aks stop   --resource-group RG1   --name AKS
+az aks start  --resource-group RG1   --name AKS
+
+

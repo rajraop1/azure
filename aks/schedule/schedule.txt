@@ -1,0 +1,54 @@
+
+
+az provider register --namespace Microsoft.App --wait
+az provider register --namespace Microsoft.OperationalInsights --wait
+
+az provider register --namespace Microsoft.Storage --wait
+
+az provider register --namespace Microsoft.ContainerRegistry --wait
+
+az extension add --name containerapp --upgrade --allow-preview true
+
+az acr create --resource-group RG --location westus2 --name acr$(az account show --query id --output tsv | tr -d '-' | cut -c1-12) --sku Basic --role-assignment-mode rbac
+
+az acr config authentication-as-arm update --registry acr$(az account show --query id --output tsv | tr -d '-' | cut -c1-12) --status enabled
+
+#az acr build --registry acr$(az account show --query id --output tsv | tr -d '-' | cut -c1-12) --image shell-job:v1 .
+az role assignment create --assignee-object-id "$(az ad signed-in-user show --query id --output tsv)" --assignee-principal-type User --role AcrPush --scope "$(az acr show --resource-group RG --name acrf29e5ccebf3d --query id --output tsv)"
+az acr login --name acrf29e5ccebf3d
+docker build --platform linux/amd64 --tag "$(az acr show --resource-group RG --name acrf29e5ccebf3d --query loginServer --output tsv)/shell-job:v1" .
+docker push "$(az acr show --resource-group RG --name acrf29e5ccebf3d --query loginServer --output tsv)/shell-job:v1"
+az acr repository show-tags --name acrf29e5ccebf3d --repository shell-job --output table
+
+
+az role assignment create --assignee-object-id "$(az identity show --resource-group RG --name MI1 --query principalId --output tsv)" --assignee-principal-type ServicePrincipal --role AcrPull --scope "$(az acr show --resource-group RG --name acr$(az account show --query id --output tsv | tr -d '-' | cut -c1-12) --query id --output tsv)"
+
+az containerapp env create --name shell-jobs-env --resource-group RG --location westus2
+
+az containerapp job create \
+  --name shell-job \
+  --resource-group RG \
+  --environment shell-jobs-env \
+  --trigger-type Schedule \
+  --cron-expression "0 6,7,8 * * *" \
+  --replica-timeout 900 \
+  --replica-retry-limit 1 \
+  --replica-completion-count 1 \
+  --parallelism 1 \
+  --container-name shell-task \
+  --image "$(az acr show --resource-group RG --name acrf29e5ccebf3d --query loginServer --output tsv)/shell-job:v1" \
+  --cpu 0.25 \
+  --memory 0.5Gi \
+  --mi-user-assigned "$(az identity show --resource-group RG --name MI1 --query id --output tsv)" \
+  --registry-server "$(az acr show --resource-group RG --name acrf29e5ccebf3d --query loginServer --output tsv)" \
+  --registry-identity "$(az identity show --resource-group RG --name MI1 --query id --output tsv)" \
+  --env-vars "AZURE_CLIENT_ID=$(az identity show --resource-group RG --name MI1 --query clientId --output tsv)"
+
+
+az containerapp job start --name shell-job --resource-group RG
+
+az containerapp job execution list --name shell-job --resource-group RG --output table
+
+az containerapp job logs show --name shell-job --resource-group RG --container shell-task --follow --format text
+
+
